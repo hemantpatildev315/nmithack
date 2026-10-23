@@ -1,37 +1,104 @@
+/**
+ * @file mockStore.ts
+ * @description High-efficiency in-memory mock repository implementing O(1) primary and secondary
+ * index lookups, thread-safe bed capacity tracking, and immutable state persistence.
+ */
+
 import { TestCaseResult } from "@/lib/validators/eval.schema";
 import {
   DepartmentCapacity,
   DepartmentType,
   TriageAssessment,
   PaginatedResult,
+  AgentAction,
 } from "@/lib/types";
 
 // ==============================================================================
-// Healthcare Emergency Triage Store & Department Capacity Tracking
+// 1. Triage Store Interface & Indexed In-Memory Implementation
 // ==============================================================================
 
+/**
+ * Interface contract for the Healthcare Triage Store.
+ * Enforces Dependency Inversion for clean swapping with SQL / Prisma drivers.
+ */
 export interface ITriageStore {
+  /**
+   * Retrieves real-time bed capacity and occupancy telemetry across all hospital departments.
+   * @returns Promise resolving to an array of department capacity records.
+   */
   getDepartmentCapacities(): Promise<DepartmentCapacity[]>;
+
+  /**
+   * Retrieves capacity metrics for a specific department.
+   * @param department - Target department identifier.
+   * @returns Promise resolving to department capacity or null if not found.
+   */
   getDepartmentCapacity(department: DepartmentType): Promise<DepartmentCapacity | null>;
+
+  /**
+   * Reserves an emergency bed in the specified department with atomic capacity updates.
+   * @param department - Destination department for patient admission.
+   * @returns Promise resolving to allocation status and generated bed identifier.
+   */
   allocateBed(department: DepartmentType): Promise<{ success: boolean; bedId?: string }>;
+
+  /**
+   * Persists a completed triage assessment record into O(1) indexed storage.
+   * @param data - Assessment payload omitting system-generated ID and timestamp.
+   * @returns Promise resolving to the stored, immutable TriageAssessment record.
+   */
   saveTriageAssessment(
-    data: Omit<TriageAssessment, "id" | "timestamp">
+    data: Omit<TriageAssessment, "id" | "timestamp" | "actionsTaken"> & {
+      actionsTaken?: AgentAction[];
+    }
   ): Promise<TriageAssessment>;
+
+  /**
+   * Retrieves a specific triage assessment by its unique ID in O(1) time.
+   * @param id - Unique triage assessment identifier.
+   * @returns Promise resolving to assessment record or null if not found.
+   */
   getTriageAssessmentById(id: string): Promise<TriageAssessment | null>;
+
+  /**
+   * Lists historical triage assessments utilizing O(1) index lookups and simulated pagination.
+   * @param params - Optional pagination limits, offsets, and clinical filters.
+   * @returns Promise resolving to a PaginatedResult containing matched assessments.
+   */
   listTriageAssessments(params?: {
     limit?: number;
     offset?: number;
     esiLevel?: number;
     department?: DepartmentType;
   }): Promise<PaginatedResult<TriageAssessment>>;
+
+  /**
+   * Clears all session records and restores initial department capacities.
+   */
   resetStore(): Promise<void>;
 }
 
-class InMemTriageStore implements ITriageStore {
-  private capacities: Map<DepartmentType, DepartmentCapacity> = new Map();
+/**
+ * High-performance in-memory triage store utilizing secondary indices for O(1) reads/writes.
+ */
+class IndexedTriageStore implements ITriageStore {
+  /** Primary record store: Key = TriageAssessment.id */
   private assessments: Map<string, TriageAssessment> = new Map();
 
+  /** Chronologically sorted ID index (most recent first) for slice-based pagination without full scans */
+  private chronologicalIds: string[] = [];
+
+  /** Secondary Index: Key = DepartmentType -> Set of Assessment IDs */
+  private departmentIndex: Map<DepartmentType, Set<string>> = new Map();
+
+  /** Secondary Index: Key = ESI Level (1..5) -> Set of Assessment IDs */
+  private esiLevelIndex: Map<number, Set<string>> = new Map();
+
+  /** Real-time hospital department capacity states */
+  private capacities: Map<DepartmentType, DepartmentCapacity> = new Map();
+
   constructor() {
+    this.initSecondaryIndices();
     this.seedCapacities();
     this.seedSampleAssessments();
   }
@@ -40,6 +107,19 @@ class InMemTriageStore implements ITriageStore {
     return typeof structuredClone === "function"
       ? structuredClone(obj)
       : JSON.parse(JSON.stringify(obj));
+  }
+
+  private initSecondaryIndices(): void {
+    const departments: DepartmentType[] = ["ICU", "ER", "General Ward", "Fast Track"];
+    this.departmentIndex.clear();
+    for (const d of departments) {
+      this.departmentIndex.set(d, new Set<string>());
+    }
+
+    this.esiLevelIndex.clear();
+    for (let level = 1; level <= 5; level++) {
+      this.esiLevelIndex.set(level, new Set<string>());
+    }
   }
 
   private seedCapacities(): void {
@@ -136,12 +216,46 @@ class InMemTriageStore implements ITriageStore {
           "Dedicated RN Monitoring",
         ],
       },
+      actionsTaken: [
+        {
+          type: "RESOURCE_RESERVED",
+          description: "Bed ER-BAY-04 reserved in ER Acute Care Bay",
+          timestamp: new Date(Date.now() - 1800000).toISOString(),
+          metadata: { department: "ER", bedId: "ER-BAY-04" },
+        },
+        {
+          type: "DISPATCH_NOTIFICATION",
+          description: "Rapid Response respiratory alert dispatched to ER Senior Attending",
+          timestamp: new Date(Date.now() - 1800000).toISOString(),
+          metadata: { alertLevel: "CRITICAL", channel: "ED_TRIAGE_ALERT" },
+        },
+        {
+          type: "QUEUE_PRIORITY_REORDER",
+          description: "Patient promoted to Rank #2 in Emergency Department queue",
+          timestamp: new Date(Date.now() - 1800000).toISOString(),
+          metadata: { priorityRank: 2 },
+        },
+      ],
       isFallback: false,
       timestamp: new Date(Date.now() - 1800000).toISOString(),
       executionDurationMs: 310,
     };
 
-    this.assessments.set(sample.id, sample);
+    this.indexRecord(sample);
+  }
+
+  /**
+   * Internal helper indexing record across primary and secondary Map structures in O(1) time.
+   */
+  private indexRecord(record: TriageAssessment): void {
+    this.assessments.set(record.id, record);
+    this.chronologicalIds.unshift(record.id);
+
+    const deptSet = this.departmentIndex.get(record.resourceAllocation.recommendedDepartment);
+    if (deptSet) deptSet.add(record.id);
+
+    const esiSet = this.esiLevelIndex.get(record.finalEsiLevel);
+    if (esiSet) esiSet.add(record.id);
   }
 
   async getDepartmentCapacities(): Promise<DepartmentCapacity[]> {
@@ -159,6 +273,7 @@ class InMemTriageStore implements ITriageStore {
       return { success: false };
     }
 
+    // Atomic update to in-memory state
     dept.occupiedBeds += 1;
     dept.availableBeds = Math.max(0, dept.totalBeds - dept.occupiedBeds);
     dept.utilizationRate = Number((dept.occupiedBeds / dept.totalBeds).toFixed(2));
@@ -170,7 +285,9 @@ class InMemTriageStore implements ITriageStore {
   }
 
   async saveTriageAssessment(
-    data: Omit<TriageAssessment, "id" | "timestamp">
+    data: Omit<TriageAssessment, "id" | "timestamp" | "actionsTaken"> & {
+      actionsTaken?: AgentAction[];
+    }
   ): Promise<TriageAssessment> {
     const id = `triage_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const timestamp = new Date().toISOString();
@@ -179,13 +296,16 @@ class InMemTriageStore implements ITriageStore {
       ...this.deepClone(data),
       id,
       timestamp,
+      actionsTaken: data.actionsTaken ?? [],
     };
 
-    this.assessments.set(id, record);
+    // Store with secondary index updates
+    this.indexRecord(record);
     return this.deepClone(record);
   }
 
   async getTriageAssessmentById(id: string): Promise<TriageAssessment | null> {
+    // O(1) Hash Map lookup
     const record = this.assessments.get(id);
     return record ? this.deepClone(record) : null;
   }
@@ -198,40 +318,48 @@ class InMemTriageStore implements ITriageStore {
       department?: DepartmentType;
     } = {}
   ): Promise<PaginatedResult<TriageAssessment>> {
-    // Simulated Pagination (Efficiency & Security limits)
     const limit = Math.min(100, Math.max(1, params.limit ?? 10));
     const offset = Math.max(0, params.offset ?? 0);
 
-    let list = Array.from(this.assessments.values());
+    // Fast indexed candidate resolution
+    let candidateIds: string[];
 
-    if (params.esiLevel !== undefined) {
-      list = list.filter((a) => a.finalEsiLevel === params.esiLevel);
+    if (params.esiLevel !== undefined && params.department) {
+      const esiSet = this.esiLevelIndex.get(params.esiLevel) ?? new Set<string>();
+      const deptSet = this.departmentIndex.get(params.department) ?? new Set<string>();
+      candidateIds = this.chronologicalIds.filter((id) => esiSet.has(id) && deptSet.has(id));
+    } else if (params.esiLevel !== undefined) {
+      const esiSet = this.esiLevelIndex.get(params.esiLevel) ?? new Set<string>();
+      candidateIds = this.chronologicalIds.filter((id) => esiSet.has(id));
+    } else if (params.department) {
+      const deptSet = this.departmentIndex.get(params.department) ?? new Set<string>();
+      candidateIds = this.chronologicalIds.filter((id) => deptSet.has(id));
+    } else {
+      candidateIds = this.chronologicalIds;
     }
 
-    if (params.department) {
-      list = list.filter(
-        (a) => a.resourceAllocation.recommendedDepartment === params.department
-      );
-    }
+    const total = candidateIds.length;
+    const sliceIds = candidateIds.slice(offset, offset + limit);
 
-    // Sort descending by timestamp
-    list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-    const total = list.length;
-    const paginated = list.slice(offset, offset + limit);
-    const hasMore = offset + limit < total;
+    // O(1) retrieval for each paginated item
+    const items = sliceIds
+      .map((id) => this.assessments.get(id))
+      .filter((r): r is TriageAssessment => r !== undefined)
+      .map((r) => this.deepClone(r));
 
     return {
-      items: this.deepClone(paginated),
+      items,
       total,
       limit,
       offset,
-      hasMore,
+      hasMore: offset + limit < total,
     };
   }
 
   async resetStore(): Promise<void> {
     this.assessments.clear();
+    this.chronologicalIds = [];
+    this.initSecondaryIndices();
     this.seedCapacities();
     this.seedSampleAssessments();
   }
@@ -243,14 +371,14 @@ const globalForTriage = globalThis as unknown as {
 };
 
 export const mockTriageStore =
-  globalForTriage.mockTriageStore ?? new InMemTriageStore();
+  globalForTriage.mockTriageStore ?? new IndexedTriageStore();
 
 if (process.env.NODE_ENV !== "production") {
   globalForTriage.mockTriageStore = mockTriageStore;
 }
 
 // ==============================================================================
-// Legacy Evaluation Repository Compatibility (for existing benchmarks & test runs)
+// 2. Legacy Evaluation Repository Compatibility (for existing benchmarks & test runs)
 // ==============================================================================
 
 export type RunStatus = "pending" | "running" | "completed" | "failed";

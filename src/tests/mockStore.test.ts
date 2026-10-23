@@ -55,7 +55,7 @@ describe("In-Memory Mock Repository (mockStore.ts)", () => {
     });
 
     // Mutate the returned object locally
-    (created as any).model = "HACKED_MODEL";
+    (created as Record<string, unknown>).model = "HACKED_MODEL";
 
     // Verify stored entity inside repository remains unmodified
     const fetched = await mockEvaluationRepository.getRunById(created.id);

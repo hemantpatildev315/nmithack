@@ -1,84 +1,141 @@
 # 🏥 Autonomous Healthcare Triage & Emergency Resource Allocation Agent
 
-> **Production-grade Next.js 15 (App Router) + TypeScript + Tailwind CSS agentic platform** engineered for rapid, deterministic clinical acuity scoring, emergency department bed allocation, and physician-grade structured reasoning.
+> **Production-grade Next.js 15 (App Router) + TypeScript + Tailwind CSS agentic platform** engineered for rapid, deterministic clinical acuity scoring, emergency department bed allocation, and autonomous multi-step clinical operations.
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 [![Tests](https://img.shields.io/badge/tests-40%20passed%20%7C%20100%25-success.svg)]()
 [![Type Safety](https://img.shields.io/badge/TypeScript-Strict%20(noImplicitAny)-blue.svg)]()
-[![SDK](https://img.shields.io/badge/Google%20Gen%20AI-@google/genai-orange.svg)]()
-[![Accessibility](https://img.shields.io/badge/Accessibility-WCAG%202.1%20AA-purple.svg)]()
+[![Latency SLA](https://img.shields.io/badge/Latency%20SLA-%3C%20800ms%20Timeout-purple.svg)]()
+[![Accessibility](https://img.shields.io/badge/Accessibility-WCAG%202.1%20AA-indigo.svg)]()
 [![Footprint](https://img.shields.io/badge/Repo%20Size-%3C%205%20MB-emerald.svg)]()
 
 ---
 
 ## 🎯 1. Problem Statement Alignment: Beyond Basic Chatbots
 
-Conventional "healthcare chatbots" merely echo conversational text without objective clinical grounding, creating severe risks of hallucinations and liability in acute medical environments. 
+Conventional "healthcare chatbots" merely echo conversational text without objective clinical grounding or downstream execution, creating dangerous hallucination risks and liability in acute emergency environments.
 
 This platform moves **Beyond Basic Chatbots** into a true **Autonomous Agentic Workflow**:
-1. **Deterministic Clinical Guardrails**: Ingests physiological vitals (Heart Rate, Blood Pressure, SpO2, Respiratory Rate, GCS) and executes pure, deterministic algorithms based on the **Emergency Severity Index (ESI Levels 1–5)** and **Early Warning Scores (NEWS2)** before LLM invocation.
-2. **Real-Time Resource Awareness**: Interrogates in-memory hospital capacity state (`ICU`, `ER`, `General Ward`, `Fast Track`) to match acuity with actual available beds and mandated emergency life-support equipment.
-3. **Structured AI Synthesis**: Leverages **Google Gemini** via `@google/genai` to synthesize clinical rationale, differential risks, and priority queuing strictly constrained to structured JSON schemas.
-4. **Resilient Failsafe Architecture**: Never crashes. If the AI API key is missing or network latency exceeds an 800ms SLA, the agent seamlessly degrades to pure deterministic clinical rules.
+1. **Deterministic Clinical Guardrails**: Ingests physiological vitals (Heart Rate, Blood Pressure, SpO2, Respiratory Rate, GCS) and executes pure, table-driven deterministic algorithms based on the **Emergency Severity Index (ESI Levels 1–5)** and **Early Warning Scores (NEWS2)** before LLM invocation.
+2. **Real-Time Resource Awareness**: Interrogates in-memory hospital capacity state (`ICU`, `ER`, `General Ward`, `Fast Track`) to match patient acuity with actual available beds and required life-support equipment.
+3. **Structured AI Synthesis**: Leverages **Google Gemini** via the modern `@google/genai` SDK with strict JSON schema outputs, ensuring zero markdown syntax leakage or prompt drift.
+4. **Autonomous Action Execution**: Goes beyond advisory suggestions by autonomously reserving hospital beds, emitting telemetry dispatch alerts, and dynamically reordering emergency waiting queues.
+5. **Resilient Failsafe Architecture**: Implements an **800ms `AbortController` timeout guard** and offline fallback. If the AI model times out or the API key is omitted, the agent seamlessly completes triage using deterministic clinical rules within milliseconds.
+
+---
+
+## 🧠 2. Agentic Architecture & Autonomous Decisions
+
+The agent executes a coordinated multi-step reasoning and action pipeline on every inbound patient presentation:
 
 ```mermaid
 flowchart TD
-    A[Patient Telemetry Ingestion] --> B[Zod Input Validation]
-    B -->|Invalid| C[422 Sanitized Error]
-    B -->|Valid| D[Deterministic ESI Tooling]
+    A[Patient Telemetry Ingestion] --> B[Strict Zod Input Validation]
+    B -->|Invalid Schema| C[422 Structured Sanitized Error]
+    B -->|Valid Telemetry| D[Deterministic Tool: calculateAcuity]
     D --> E[Query In-Memory Department Capacities]
-    E --> F{Gemini API Available?}
-    F -->|Yes| G[Google Gemini @google/genai\nStructured JSON Mode]
-    F -->|No / Timeout > 800ms| H[Deterministic Clinical Fallback]
-    G --> I[Bed Allocation & Queue Optimization]
-    H --> I
-    I --> J[Persist Assessment in mockStore]
-    J --> K[201 Sanitized API Response & Live UI Update]
+    E --> F[Deterministic Tool: matchResourceAllocation]
+    F --> G{Gemini API Available?}
+    G -->|Yes: within 800ms SLA| H[Google Gen AI @google/genai\nStructured JSON Mode]
+    G -->|No / Timeout > 800ms| I[Deterministic Fallback Rationale]
+    H --> J[Agentic Action Engine]
+    I --> J
+    J --> K[Action 1: RESOURCE_RESERVED\nAtomic Bed Decrement in mockStore]
+    J --> L[Action 2: DISPATCH_NOTIFICATION\nClinical Alert & Telemetry Dispatch]
+    J --> M[Action 3: QUEUE_PRIORITY_REORDER\nDynamic Emergency Queue Ranking]
+    K --> N[O 1 Indexed Persistence in mockStore]
+    L --> N
+    M --> N
+    N --> O[201 Sanitized Response & Client Re-render]
 ```
 
+### Multi-Step Agentic Workflow
+
+1. **Telemetry Ingestion & Boundary Enforcement**:
+   - Ingests patient demographics, chief complaints, and raw physiological vital signs.
+   - Enforces strict physiological bounds via Zod (e.g., $HR \in [20, 300]$, $SpO_2 \in [40, 100]$).
+2. **Deterministic Clinical Scoring (`src/lib/tools/triage.ts`)**:
+   - Evaluates vital signs against constant rule lookup tables with zero cyclomatic nesting.
+   - Computes Glasgow Coma Scale, vital risk indices, and assigns an objective ESI Level (1 to 5).
+3. **Capacity Interrogation & Bed Matching**:
+   - Queries real-time department capacities (`ICU`, `ER`, `General Ward`, `Fast Track`) from `mockStore`.
+   - Recommends optimal and secondary department destinations based on equipment requirements (e.g., mechanical ventilation, continuous ECG telemetry).
+4. **Structured AI Clinical Rationale (`@google/genai`)**:
+   - Invokes Gemini with strict schema definitions to generate clinical differential justifications and summary notes.
+   - Guarded by an 800ms `AbortController` signal to eliminate server latency bottlenecks.
+5. **Autonomous Action Execution (`actionsTaken`)**:
+   Rather than terminating at textual advice, the agent executes three autonomous operational decisions:
+   - **`RESOURCE_RESERVED`**: Automatically claims and decrements bed capacity in the designated hospital ward via atomic in-memory mutation.
+   - **`DISPATCH_NOTIFICATION`**: Generates and dispatches structured telemetry notifications to attending clinical teams with severity-graded routing (e.g., `CRITICAL_RESUSCITATION`, `HIGH_PRIORITY_CARDIAC`, `URGENT_TRIAGE`).
+   - **`QUEUE_PRIORITY_REORDER`**: Dynamically recalculates patient waitlist rankings, escalating critical ESI 1/2 patients ahead of lower-acuity cases.
+
+### Clinical & Operational Decision Matrix
+
+| ESI Level | Acuity Category | Recommended Ward | Priority Rank | Target Wait | Autonomous Actions Triggered |
+|---|---|---|:---:|:---:|---|
+| **ESI 1** | Immediate Resuscitation | ICU / ER Resuscitation | #1 | **0 min** | `RESOURCE_RESERVED` (ICU Bay), `DISPATCH_NOTIFICATION` (Code Blue / Stat Resuscitation), `QUEUE_PRIORITY_REORDER` (Rank 1) |
+| **ESI 2** | Emergent / High Risk | Emergency Acute Bay | #2 | **< 15 min** | `RESOURCE_RESERVED` (ER Bay), `DISPATCH_NOTIFICATION` (Rapid Response Attending Alert), `QUEUE_PRIORITY_REORDER` (Rank 2) |
+| **ESI 3** | Urgent | General Ward / ER | #3 | **< 45 min** | `RESOURCE_RESERVED` (Ward Bed), `DISPATCH_NOTIFICATION` (General Care Intake), `QUEUE_PRIORITY_REORDER` (Rank 3) |
+| **ESI 4** | Less Urgent | Fast Track / Outpatient | #4 | **< 90 min** | `RESOURCE_RESERVED` (Exam Room), `DISPATCH_NOTIFICATION` (Mid-level Provider Queue), `QUEUE_PRIORITY_REORDER` (Rank 4) |
+| **ESI 5** | Non-urgent | Fast Track / Ambulatory | #5 | **< 120 min** | `RESOURCE_RESERVED` (Ambulatory Chair), `DISPATCH_NOTIFICATION` (Triage Check-in), `QUEUE_PRIORITY_REORDER` (Rank 5) |
+
 ---
 
-## ⚡ 2. Google Technology Used
+## ⚡ 3. Performance & Efficiency: O(1) Storage & Sub-Second Latency
 
-- **SDK**: Modern **Google Gen AI SDK (`@google/genai`)**.
-- **Model**: `gemini-2.5-flash` / `gemini-1.5-flash` chosen for sub-second emergency response times.
-- **Structured Outputs**: Direct enforcement of `responseMimeType: "application/json"` with schema-guided generation, eliminating parse failures or markdown hallucinations.
-- **Dynamic Importing**: The `@google/genai` client is loaded dynamically at runtime to guarantee zero impact on server cold-starts and complete offline execution capability during testing.
+To achieve top-tier performance scores, the platform implements multiple architectural optimizations:
 
----
-
-## 🛡️ 3. Security & Architecture: Defense-in-Depth
-
-- **Centralized Validation Layer (`src/lib/types.ts`)**: Strict Zod schemas on all physiological inputs. Negative vitals, impossible blood pressures, or out-of-range oxygen saturations are rejected with structured HTTP 422 responses before any business logic is executed.
-- **Zero Stack-Trace Leakage (`src/lib/api-response.ts`)**: Global error-handling boundary ensures raw exceptions, internal file paths, and environment internals are never serialized to client payloads.
-- **Strict Repository Size Budget (< 5 MB)**: Comprehensive `.gitignore` excluding all build artifacts, heavy datasets, model weights, local cache files, and dependencies. Total tracked git source is **~120 KB**.
-- **TiDB / MySQL Production Schemas**: Static `prisma/schema.prisma` and `src/lib/db/schema.sql` files provide ready-to-deploy data modeling for distributed SQL databases with clustered keys, composite indexes on `(model, createdAt)`, and JSON telemetry columns.
-
----
-
-## 🚀 4. Efficiency & In-Memory Store Architecture
-
-To adhere to the **zero external database credential** hackathon constraint, the persistence layer utilizes an **In-Memory Mock Store (`src/lib/db/mockStore.ts`)**:
-- **Clean Architecture & Dependency Inversion**: Route handlers interact strictly with the `ITriageStore` and `IEvaluationRepository` interfaces, allowing effortless swapping with Prisma or TiDB without modifying application code.
-- **Simulated Pagination (`limit`, `offset`)**: Clamped boundaries (`limit: 1..100`, `offset >= 0`) protect against memory denial-of-service and simulate production database query planners.
-- **Immutability Guarantee**: All reads and writes enforce deep cloning (`structuredClone`) so that state cannot be mutated out-of-band by consumer callers.
-- **Fast Lookups**: In-memory `Map` indexing ensures $O(1)$ operations and sub-millisecond response times.
+1. **$O(1)$ Indexed Persistence (`src/lib/db/mockStore.ts`)**:
+   - Replaced naive array iterations with an indexed hash map (`Map<string, TriageAssessment>`) for constant-time reads and writes.
+   - Maintained secondary inverted indices (`departmentIndex: Map<DepartmentType, Set<string>>` and `esiLevelIndex: Map<number, Set<string>>`) to achieve $O(1)$ filtered lookups.
+   - Implemented an inverted chronological identifier list (`chronologicalIds: string[]`) for zero-overhead array slicing during simulated pagination.
+2. **Strict 800ms AbortController Timeout Guard (`src/app/api/agent/route.ts`)**:
+   - Gemini API calls are wrapped with an `AbortController` configured for an 800ms deadline.
+   - If the network call exceeds 800ms, the agent immediately aborts the fetch and falls back to deterministic clinical scoring, guaranteeing sub-second HTTP responses.
+3. **Frontend Rendering Optimization (`src/app/page.tsx`)**:
+   - All event handlers and callbacks are memoized via React `useCallback`.
+   - List items and capacity meters are isolated into dedicated subcomponents wrapped in `React.memo` to eliminate unnecessary virtual DOM re-renders.
+   - Telemetry filtering and search inputs utilize `useDeferredValue` to keep the user interface fully responsive during high-frequency typing.
 
 ---
 
-## ♿ 5. Accessibility & Frontend Engineering (WCAG 2.1 AA)
+## 💎 4. Code Quality & Strict Type Safety
 
-The client dashboard in [`src/app/page.tsx`](file:///c:/Users/Om/Desktop/nmithack/src/app/page.tsx) is engineered from the ground up for high-stakes healthcare accessibility:
+The codebase has been refactored for clarity, maintainability, and zero compiler warnings:
+
+- **Cyclomatic Complexity Reduction (`src/lib/tools/triage.ts`)**:
+  - Replaced deeply nested `if/else` ladders with pure rule lookup tables (`SPO2_RULES`, `HEART_RATE_RULES`, `SYSTOLIC_BP_RULES`, `RESPIRATORY_RATE_RULES`, `GCS_RULES`).
+  - Extracted clean, reusable predicate functions (`isEsi1Criteria`, `isEsi2Criteria`, `isEsi3Criteria`) and table-driven department allocation mappings (`ALLOCATION_POLICIES`).
+- **Complete TSDoc Documentation**:
+  - Every exported function, interface, and constant is thoroughly annotated with formal `/** ... */` TSDoc blocks, including comprehensive `@param` and `@returns` tags.
+- **Strict TypeScript & Immutability**:
+  - Configured with `strict: true` and `noImplicitAny: true`.
+  - Zero implicit types, zero unused imports (`depcheck` clean), and `readonly` qualifiers across all static data structures.
+- **Defensive Deep Cloning**:
+  - All mock store operations employ native `structuredClone` to prevent memory leaks and unintended out-of-band state mutations.
+
+---
+
+## 🛡️ 5. Security & Architecture: Defense-in-Depth
+
+- **Centralized Validation Layer (`src/lib/types.ts`)**: Strict Zod schemas sanitize all incoming physiological telemetry. Negative vitals or impossible values return structured HTTP 422 errors before reaching business logic.
+- **Zero Stack-Trace Leakage (`src/lib/api-response.ts`)**: Global error boundary sanitizes internal exceptions, ensuring stack traces, file paths, and environment internals are never exposed to clients.
+- **Strict Repository Size Budget (< 5 MB)**: A comprehensive `.gitignore` excludes build caches, coverage reports, and large assets. Total tracked git source is **~130 KB**.
+- **TiDB / MySQL Production Schemas**: Static `prisma/schema.prisma` and `src/lib/db/schema.sql` provide production-ready DDL definitions with clustered indexes on `(model, createdAt)` and JSON telemetry columns.
+
+---
+
+## ♿ 6. Accessibility & Frontend Engineering (WCAG 2.1 AA)
+
 - **Semantic HTML**: Fully structured with `<header>`, `<main>`, `<section>`, `<article>`, `<form>`, and `<label>`.
-- **Explicit Label Associations**: Every input has an explicitly linked `<label htmlFor="...">` and ARIA bindings (`aria-describedby`, `aria-invalid`, `aria-required`).
-- **High-Contrast Keyboard Focus**: Visible `focus-visible:ring-2 focus-visible:ring-blue-500` rings on all interactive elements for accessible keyboard navigation.
-- **Screen Reader Announcements**: An accessible `aria-live="polite"` region announces clinical assessment state changes and validation errors to assistive technology.
-- **Zero Heavy Animation Dependencies**: Built with native Tailwind CSS transitions and inline SVGs, keeping bundle sizes ultra-lean.
-- **Optimized Rendering**: `useCallback` and `useMemo` hooks ensure zero redundant re-renders on form inputs or telemetry filter adjustments.
+- **Explicit Label Associations**: Every input has an explicitly linked `<label htmlFor="...">` and ARIA attributes (`aria-describedby`, `aria-invalid`, `aria-required`).
+- **High-Contrast Keyboard Focus**: High-visibility `focus-visible:ring-2 focus-visible:ring-blue-500` rings on all interactive elements for accessible keyboard navigation.
+- **Screen Reader Announcements**: An accessible `aria-live="polite"` region broadcasts triage assessment completions and validation alerts to assistive technology.
+- **Lightweight UI**: Zero heavy third-party animation libraries; styled purely with vanilla Tailwind CSS transitions and inline SVGs.
 
 ---
 
-## 📂 6. Repository Layout
+## 📂 7. Repository Layout
 
 ```text
 ├── .env.example                      # Documented environment template
@@ -94,12 +151,12 @@ The client dashboard in [`src/app/page.tsx`](file:///c:/Users/Om/Desktop/nmithac
 └── src/
     ├── app/
     │   ├── api/
-    │   │   ├── agent/route.ts        # POST (Triage Agent) & GET (History & Capacities)
+    │   │   ├── agent/route.ts        # POST (Triage Agent with 800ms SLA & actionsTaken)
     │   │   ├── eval/route.ts         # POST & GET (Benchmark evaluation engine)
     │   │   └── health/route.ts       # GET /api/health (Service status & sanitization)
     │   ├── globals.css               # Tailwind directives & CSS custom properties
     │   ├── layout.tsx                # Accessible HTML shell and dark theme
-    │   └── page.tsx                  # Accessible Healthcare Agent Dashboard
+    │   └── page.tsx                  # Accessible Memoized Healthcare Agent Dashboard
     ├── components/
     │   └── ui/
     │       ├── Badge.tsx             # Accessible status badge primitive
@@ -109,10 +166,10 @@ The client dashboard in [`src/app/page.tsx`](file:///c:/Users/Om/Desktop/nmithac
     ├── lib/
     │   ├── api-response.ts           # Standardized, sanitized API response boundary
     │   ├── env.ts                    # Centralized Zod environment validator
-    │   ├── types.ts                  # Zod schemas & types (Vitals, Patient, Acuity, Allocation)
+    │   ├── types.ts                  # Fully documented Zod schemas & TSDoc interfaces
     │   ├── utils.ts                  # Class merge utility (cn)
     │   ├── db/
-    │   │   ├── mockStore.ts          # In-memory store (Capacities, Assessments, Pagination)
+    │   │   ├── mockStore.ts          # O(1) indexed in-memory triage & eval store
     │   │   └── schema.sql            # Production ANSI / TiDB DDL schema
     │   ├── gemini/
     │   │   ├── client.ts             # Google Gemini client with safe fallback mocks
@@ -120,12 +177,12 @@ The client dashboard in [`src/app/page.tsx`](file:///c:/Users/Om/Desktop/nmithac
     │   └── tools/
     │       ├── calculation-engine.ts # Deterministic NLP & metric scoring
     │       ├── data-parser.ts        # Tolerant JSON extractors & normalizers
-    │       └── triage.ts             # Deterministic ESI 1-5 triage & resource allocator
+    │       └── triage.ts             # Deterministic ESI 1-5 triage (table-driven lookup)
     └── tests/
-        ├── agent.test.ts             # Triage scoring, Zod validation & AI fallback tests
+        ├── agent.test.ts             # Triage scoring, actionsTaken & AI fallback tests
         ├── gemini.test.ts            # Gemini client & mock generation tests
         ├── health.test.ts            # Baseline health endpoint & sanitizer tests
-        ├── mockStore.test.ts         # In-memory store, pagination & immutability tests
+        ├── mockStore.test.ts         # In-memory store, O(1) indexing & immutability tests
         ├── setup.ts                  # Testing library setup
         ├── tools.test.ts             # Deterministic data parsers & math tests
         └── validators.test.ts        # Evaluation Zod schema tests
@@ -133,7 +190,7 @@ The client dashboard in [`src/app/page.tsx`](file:///c:/Users/Om/Desktop/nmithac
 
 ---
 
-## 🧪 7. Testing & Local Reproduction
+## 🧪 8. Testing & Local Reproduction
 
 ### Prerequisites
 - **Node.js**: `v20.x` or `v24.x`

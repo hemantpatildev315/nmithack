@@ -268,11 +268,18 @@ describe("Structured AI Reasoning Route (POST /api/agent)", () => {
     expect(body.data.resourceAllocation.allocatedBedId).toBeDefined();
     expect(body.data.clinicalSummary).toContain("Marcus Vance");
     expect(body.data.aiReasoning).toBeTypeOf("string");
+    expect(Array.isArray(body.data.actionsTaken)).toBe(true);
+    expect(body.data.actionsTaken.length).toBe(3);
+    const actionTypes = body.data.actionsTaken.map((a: { type: string }) => a.type);
+    expect(actionTypes).toContain("RESOURCE_RESERVED");
+    expect(actionTypes).toContain("DISPATCH_NOTIFICATION");
+    expect(actionTypes).toContain("QUEUE_PRIORITY_REORDER");
 
     // Verify record was persisted into in-memory mock store
     const stored = await mockTriageStore.getTriageAssessmentById(body.data.id);
     expect(stored).not.toBeNull();
     expect(stored?.id).toBe(body.data.id);
+    expect(stored?.actionsTaken?.length).toBe(3);
   });
 
   it("should return 422 Unprocessable Entity when request payload contains invalid vitals", async () => {
