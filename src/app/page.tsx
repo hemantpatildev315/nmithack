@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -12,6 +12,26 @@ interface TestCase {
   input: string;
   expectedOutput: string;
   context?: string;
+}
+
+interface BenchmarkRunSummary {
+  id: string;
+  model: string;
+  status: string;
+  totalCases: number;
+  passedCases: number;
+  averageScore: number;
+  averageLatencyMs: number;
+  durationMs: number;
+  createdAt: string;
+}
+
+interface AggregateStats {
+  totalRuns: number;
+  completedRuns: number;
+  overallAvgScore: number;
+  totalEvaluatedCases: number;
+  avgLatencyMs: number;
 }
 
 const PRESET_TEST_CASES: TestCase[] = [
@@ -42,6 +62,38 @@ export default function HomePage() {
   const [isRunning, setIsRunning] = useState(false);
   const [evalResult, setEvalResult] = useState<any>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // In-memory repository state
+  const [recentRuns, setRecentRuns] = useState<BenchmarkRunSummary[]>([]);
+  const [stats, setStats] = useState<AggregateStats | null>(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+
+  const fetchStoreData = useCallback(async () => {
+    try {
+      const [runsRes, statsRes] = await Promise.all([
+        fetch("/api/eval?limit=5"),
+        fetch("/api/eval?stats=true"),
+      ]);
+
+      const runsJson = await runsRes.json();
+      const statsJson = await statsRes.json();
+
+      if (runsJson.success && runsJson.data?.items) {
+        setRecentRuns(runsJson.data.items);
+      }
+      if (statsJson.success && statsJson.data) {
+        setStats(statsJson.data);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch store history:", err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStoreData();
+  }, [fetchStoreData]);
 
   const handleRunEvaluation = async () => {
     setIsRunning(true);
@@ -80,6 +132,8 @@ export default function HomePage() {
       }
 
       setEvalResult(json.data);
+      // Refresh mock store session records
+      await fetchStoreData();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Failed to execute evaluation");
     } finally {
@@ -98,17 +152,17 @@ export default function HomePage() {
                 AI Evaluation Studio
               </h1>
               <Badge variant="success" dot>
-                Hackathon Ready
+                Offline Ready
               </Badge>
             </div>
             <p className="text-sm text-slate-400 mt-1">
-              Production-grade evaluation harnesses, deterministic metric engines, and Gemini integration with safe fallback mocks.
+              Production-grade evaluation harnesses, deterministic metric engines, and an in-memory session mock store.
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <Badge variant="info">Next.js 15 App Router</Badge>
-            <Badge variant="neutral">TypeScript Strict</Badge>
+            <Badge variant="info">In-Memory Mock Store Active</Badge>
+            <Badge variant="neutral">Zero External DB Needed</Badge>
           </div>
         </header>
 
@@ -117,48 +171,56 @@ export default function HomePage() {
           <Card className="bg-slate-900/60">
             <CardHeader className="p-4 pb-2">
               <CardDescription className="text-xs uppercase tracking-wider text-slate-400">
-                Evaluation Engine
+                Session Store Runs
               </CardDescription>
-              <CardTitle className="text-xl text-white">Google Gemini</CardTitle>
+              <CardTitle className="text-xl text-white">
+                {stats ? stats.totalRuns : "..."} Runs
+              </CardTitle>
             </CardHeader>
             <CardContent className="p-4 pt-0">
-              <span className="text-xs text-emerald-400 font-mono">Safe Mock Fallback Active</span>
+              <span className="text-xs text-emerald-400 font-mono">
+                {stats ? `${stats.totalEvaluatedCases} Cases Evaluated` : "Simulated In-Memory"}
+              </span>
             </CardContent>
           </Card>
 
           <Card className="bg-slate-900/60">
             <CardHeader className="p-4 pb-2">
               <CardDescription className="text-xs uppercase tracking-wider text-slate-400">
-                Type Safety
+                Avg Benchmark Score
               </CardDescription>
-              <CardTitle className="text-xl text-white">100% Strict</CardTitle>
+              <CardTitle className="text-xl text-white">
+                {stats ? `${(stats.overallAvgScore * 100).toFixed(1)}%` : "..."}
+              </CardTitle>
             </CardHeader>
             <CardContent className="p-4 pt-0">
-              <span className="text-xs text-blue-400 font-mono">noImplicitAny: true</span>
+              <span className="text-xs text-blue-400 font-mono">Weighted Composite Rubric</span>
             </CardContent>
           </Card>
 
           <Card className="bg-slate-900/60">
             <CardHeader className="p-4 pb-2">
               <CardDescription className="text-xs uppercase tracking-wider text-slate-400">
-                Deterministic Tools
+                Avg Response Latency
               </CardDescription>
-              <CardTitle className="text-xl text-white">EM + Token F1</CardTitle>
+              <CardTitle className="text-xl text-white">
+                {stats ? `${stats.avgLatencyMs}ms` : "..."}
+              </CardTitle>
             </CardHeader>
             <CardContent className="p-4 pt-0">
-              <span className="text-xs text-purple-400 font-mono">SQuAD Math Rubric</span>
+              <span className="text-xs text-purple-400 font-mono">&lt; 2000ms SLA Target</span>
             </CardContent>
           </Card>
 
           <Card className="bg-slate-900/60">
             <CardHeader className="p-4 pb-2">
               <CardDescription className="text-xs uppercase tracking-wider text-slate-400">
-                Repository Budget
+                DB Architecture
               </CardDescription>
-              <CardTitle className="text-xl text-white">&lt; 5 MB Target</CardTitle>
+              <CardTitle className="text-xl text-white">TiDB / MySQL Ready</CardTitle>
             </CardHeader>
             <CardContent className="p-4 pt-0">
-              <span className="text-xs text-emerald-400 font-mono">Strict .gitignore Enforced</span>
+              <span className="text-xs text-emerald-400 font-mono">Static schema.prisma provided</span>
             </CardContent>
           </Card>
         </div>
@@ -230,8 +292,8 @@ export default function HomePage() {
                     </CardDescription>
                   </div>
                   {evalResult && (
-                    <Badge variant={evalResult.results[0]?.passed ? "success" : "error"}>
-                      {evalResult.results[0]?.passed ? "Passed Threshold" : "Failed Threshold"}
+                    <Badge variant={evalResult.results?.[0]?.passed ? "success" : "error"}>
+                      {evalResult.results?.[0]?.passed ? "Passed Threshold" : "Failed Threshold"}
                     </Badge>
                   )}
                 </div>
@@ -256,12 +318,18 @@ export default function HomePage() {
                 {isRunning && (
                   <div className="text-center py-16 text-slate-400 text-sm space-y-2">
                     <div className="inline-block animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent" />
-                    <div>Executing model generation and scoring rubrics...</div>
+                    <div>Executing model generation, scoring, and storing in session repository...</div>
                   </div>
                 )}
 
                 {evalResult && evalResult.results?.[0] && (
                   <div className="space-y-4">
+                    {/* Run ID Banner */}
+                    <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
+                      <span className="text-slate-400">Persisted In-Memory Run ID:</span>
+                      <span className="font-mono text-blue-400 font-semibold">{evalResult.id}</span>
+                    </div>
+
                     {/* Actual Output */}
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -283,7 +351,7 @@ export default function HomePage() {
                       <div className="p-2 rounded bg-slate-950 border border-slate-800/80">
                         <div className="text-[10px] uppercase text-slate-500">Total Tokens</div>
                         <div className="text-sm font-mono font-medium text-white">
-                          {evalResult.results[0].tokenUsage.totalTokens}
+                          {evalResult.results[0].tokenUsage?.totalTokens ?? 0}
                         </div>
                       </div>
                       <div className="p-2 rounded bg-slate-950 border border-slate-800/80">
@@ -306,7 +374,7 @@ export default function HomePage() {
                         Rubric Metrics Breakdown
                       </label>
                       <div className="space-y-2">
-                        {evalResult.results[0].metrics.map((m: any, idx: number) => (
+                        {evalResult.results[0].metrics?.map((m: any, idx: number) => (
                           <div
                             key={idx}
                             className="p-3 rounded-lg bg-slate-950/80 border border-slate-800/80 flex items-center justify-between text-xs"
@@ -332,6 +400,67 @@ export default function HomePage() {
             </Card>
           </div>
         </div>
+
+        {/* In-Memory Store History Table */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Recent Benchmark Runs (Session In-Memory Store)</CardTitle>
+                <CardDescription>
+                  Records persisted in <code>mockStore.ts</code> without external database dependencies.
+                </CardDescription>
+              </div>
+              <Button size="sm" variant="outline" onClick={fetchStoreData} disabled={isLoadingHistory}>
+                Refresh Store
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {recentRuns.length === 0 ? (
+              <div className="text-center py-8 text-slate-500 text-sm">No benchmark runs recorded.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-slate-800 text-slate-400 uppercase tracking-wider">
+                    <tr>
+                      <th className="py-2.5 px-3">Run ID</th>
+                      <th className="py-2.5 px-3">Model</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Cases</th>
+                      <th className="py-2.5 px-3">Avg Score</th>
+                      <th className="py-2.5 px-3">Avg Latency</th>
+                      <th className="py-2.5 px-3">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono">
+                    {recentRuns.map((run) => (
+                      <tr key={run.id} className="hover:bg-slate-900/40 transition-colors">
+                        <td className="py-3 px-3 text-blue-400 font-semibold">{run.id}</td>
+                        <td className="py-3 px-3 text-slate-200">{run.model}</td>
+                        <td className="py-3 px-3">
+                          <Badge variant={run.status === "completed" ? "success" : "warning"}>
+                            {run.status}
+                          </Badge>
+                        </td>
+                        <td className="py-3 px-3 text-slate-300">
+                          {run.passedCases}/{run.totalCases}
+                        </td>
+                        <td className="py-3 px-3 text-emerald-400 font-semibold">
+                          {(run.averageScore * 100).toFixed(1)}%
+                        </td>
+                        <td className="py-3 px-3 text-slate-400">{run.averageLatencyMs}ms</td>
+                        <td className="py-3 px-3 text-slate-500 text-[11px]">
+                          {new Date(run.createdAt).toLocaleTimeString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
