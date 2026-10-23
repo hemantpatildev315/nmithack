@@ -1,0 +1,70 @@
+# ==============================================================================
+# AI-Evaluation Starter .gitignore
+# Strictly keeps repository size under 5 MB by excluding dependencies,
+# build caches, local environments, test coverage, and large evaluation datasets.
+# ==============================================================================
+
+# Node / Dependencies
+node_modules/
+.pnp
+.pnp.js
+package-lock.json.bak
+
+# Next.js Build Outputs & Caches
+.next/
+out/
+build/
+dist/
+.turbo/
+.swc/
+*.tsbuildinfo
+
+# Environment Configurations (NEVER commit secrets or API keys)
+.env
+.env*
+!.env.example
+
+# Test & Coverage Reports
+coverage/
+.nyc_output/
+*.lcov
+test-results/
+
+# Evaluation Datasets, Large Artifacts & Model Weights (Keeps repo < 5 MB)
+*.parquet
+*.arrow
+*.bin
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.tar.gz
+*.zip
+*.h5
+data/raw/
+data/embeddings/
+data/cache/
+benchmarks/results/
+eval_outputs/
+
+# Debug logs & Diagnostic Reports
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+*.pem
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.sublime-workspace
+*.sublime-project
+
+# Vercel / Deployment
+.vercel/

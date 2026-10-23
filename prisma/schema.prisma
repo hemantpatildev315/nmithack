@@ -1,0 +1,95 @@
+// ==============================================================================
+// Production Prisma Schema for TiDB / MySQL
+// Optimized for Distributed SQL, high-throughput benchmark runs, and JSON analytics.
+// ==============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model BenchmarkRun {
+  id               String           @id @default(uuid()) @db.VarChar(64)
+  model            String           @db.VarChar(128)
+  status           RunStatus        @default(PENDING)
+  totalCases       Int              @default(0)
+  passedCases      Int              @default(0)
+  failedCases      Int              @default(0)
+  averageScore     Decimal          @default(0.0000) @db.Decimal(5, 4)
+  averageLatencyMs Int              @default(0)
+  durationMs       Int              @default(0)
+  isMock           Boolean          @default(false)
+  metadata         Json?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  results          TestCaseResult[]
+
+  @@index([model, createdAt])
+  @@index([status, createdAt])
+  @@map("benchmark_runs")
+}
+
+model TestCaseResult {
+  id             String         @id @default(uuid()) @db.VarChar(64)
+  runId          String         @db.VarChar(64)
+  testCaseId     String         @db.VarChar(128)
+  input          String         @db.Text
+  expectedOutput String?        @db.Text
+  actualOutput   String         @db.MediumText
+  latencyMs      Int
+  promptTokens   Int            @default(0)
+  completionTokens Int          @default(0)
+  totalTokens    Int            @default(0)
+  overallScore   Decimal        @db.Decimal(5, 4)
+  passed         Boolean
+  isMock         Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+
+  run            BenchmarkRun   @relation(fields: [runId], references: [id], onDelete: Cascade)
+  metricScores   MetricScore[]
+
+  @@index([runId])
+  @@index([testCaseId])
+  @@map("test_case_results")
+}
+
+model MetricScore {
+  id               String         @id @default(uuid()) @db.VarChar(64)
+  testCaseResultId String         @db.VarChar(64)
+  metric           String         @db.VarChar(64)
+  score            Decimal        @db.Decimal(5, 4)
+  passed           Boolean
+  reasoning        String         @db.Text
+  details          Json?
+  createdAt        DateTime       @default(now())
+
+  testCaseResult   TestCaseResult @relation(fields: [testCaseResultId], references: [id], onDelete: Cascade)
+
+  @@index([testCaseResultId])
+  @@index([metric, score])
+  @@map("metric_scores")
+}
+
+model EvaluationDataset {
+  id          String   @id @default(uuid()) @db.VarChar(64)
+  name        String   @unique @db.VarChar(128)
+  description String?  @db.Text
+  taskType    String   @db.VarChar(64)
+  version     String   @default("1.0.0") @db.VarChar(32)
+  items       Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("evaluation_datasets")
+}
