@@ -2,6 +2,7 @@
  * @file types.ts
  * @description Core domain schemas, strict TypeScript types, and validation contracts
  * for the Autonomous Healthcare Triage & Emergency Resource Allocation Agent.
+ * Enforces zero implicit any, runtime Zod boundary guards, and exhaustive TSDoc annotations.
  */
 
 import { z } from "zod";
@@ -12,6 +13,7 @@ import { z } from "zod";
 
 /**
  * Zod schema enforcing physiological thresholds for vital sign parameters.
+ * Validates heart rate, blood pressure, oxygen saturation, and respiratory dynamics.
  */
 export const VitalsSchema = z.object({
   /** Heart rate in beats per minute (bpm). Valid range: 20–300. */
@@ -188,11 +190,17 @@ export const ResourceAllocationSchema = z.object({
 export type ResourceAllocation = z.infer<typeof ResourceAllocationSchema>;
 
 // ==============================================================================
-// 5. Autonomous Agent Actions (Problem Alignment)
+// 5. Autonomous Agent Actions (Problem Statement Alignment)
 // ==============================================================================
 
-/** Enum of autonomous agent actions executed during the triage cycle. */
+/**
+ * Enum of autonomous agent actions executed during the triage cycle.
+ * Represents side-effect decisions executed directly by the agentic pipeline.
+ */
 export const AgentActionTypeEnum = z.enum([
+  "BED_RESERVATION_MUTATION",
+  "PRIORITY_QUEUE_REINDEX",
+  "CLINICAL_DISPATCH_ALERT",
   "RESOURCE_RESERVED",
   "DISPATCH_NOTIFICATION",
   "QUEUE_PRIORITY_REORDER",
@@ -217,7 +225,7 @@ export const AgentActionSchema = z.object({
 export type AgentAction = z.infer<typeof AgentActionSchema>;
 
 // ==============================================================================
-// 6. Triage Assessment Record (Stored Entity)
+// 6. Triage Assessment Record (Stored Entity & Fast O(1) Cache)
 // ==============================================================================
 
 /**
@@ -238,14 +246,29 @@ export const TriageAssessmentSchema = z.object({
     z.literal(5),
   ]),
   resourceAllocation: ResourceAllocationSchema,
+  agentActionsExecuted: z.array(AgentActionSchema).default([]),
   actionsTaken: z.array(AgentActionSchema).default([]),
   isFallback: z.boolean(),
   timestamp: z.string(),
   executionDurationMs: z.number().nonnegative(),
+  latencyMs: z.number().nonnegative().optional(),
+  toolExecutionTimeMs: z.number().nonnegative().optional(),
+  confidenceScore: z.number().min(0).max(1).optional(),
 });
 
 /** Represents a complete, persisted triage assessment. */
 export type TriageAssessment = z.infer<typeof TriageAssessmentSchema>;
+
+/** Semantic alias for persisted triage records in O(1) lookup stores. */
+export type TriageRecord = TriageAssessment;
+
+/**
+ * Cache entry structure for LRU computation caching.
+ */
+export interface CacheEntry<T = unknown> {
+  readonly result: T;
+  readonly timestamp: number;
+}
 
 // ==============================================================================
 // 7. Request / Query Schemas

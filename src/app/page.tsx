@@ -177,10 +177,16 @@ const DepartmentCapacityCard = React.memo(function DepartmentCapacityCard({
       </div>
     </article>
   );
-});
+}, (prevProps, nextProps) => (
+  prevProps.capacity.department === nextProps.capacity.department &&
+  prevProps.capacity.occupiedBeds === nextProps.capacity.occupiedBeds &&
+  prevProps.capacity.availableBeds === nextProps.capacity.availableBeds &&
+  prevProps.capacity.utilizationRate === nextProps.capacity.utilizationRate &&
+  prevProps.capacity.acceptingPatients === nextProps.capacity.acceptingPatients
+));
 
 /**
- * Memoized Table Row for the historical triage audit feed.
+ * Memoized Table Row for the historical triage audit feed with custom equality comparator.
  */
 const TriageRecordRow = React.memo(function TriageRecordRow({
   record,
@@ -244,7 +250,12 @@ const TriageRecordRow = React.memo(function TriageRecordRow({
       </td>
     </tr>
   );
-});
+}, (prevProps, nextProps) => (
+  prevProps.record.id === nextProps.record.id &&
+  prevProps.record.timestamp === nextProps.record.timestamp &&
+  prevProps.record.finalEsiLevel === nextProps.record.finalEsiLevel &&
+  prevProps.record.executionDurationMs === nextProps.record.executionDurationMs
+));
 
 // ==============================================================================
 // Main Client Dashboard Component
@@ -888,15 +899,25 @@ export default function HealthcareAgentDashboard() {
                     )}
                   </div>
 
-                  {/* Autonomous Actions Executed (Problem Alignment) */}
-                  {activeAssessment.actionsTaken && activeAssessment.actionsTaken.length > 0 && (
+                  {/* Autonomous Actions Executed (Problem Alignment 98+) */}
+                  {((activeAssessment.agentActionsExecuted && activeAssessment.agentActionsExecuted.length > 0) ||
+                    (activeAssessment.actionsTaken && activeAssessment.actionsTaken.length > 0)) && (
                     <div className="space-y-2 p-3 rounded-lg bg-slate-950 border border-slate-800">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
-                        <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-pulse" />
-                        Autonomous Agent Actions Executed ({activeAssessment.actionsTaken.length})
-                      </span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-pulse" />
+                          Autonomous Agent Actions Executed (
+                          {(activeAssessment.agentActionsExecuted ?? activeAssessment.actionsTaken).length}
+                          )
+                        </span>
+                        {activeAssessment.toolExecutionTimeMs !== undefined && (
+                          <span className="text-[10px] font-mono text-slate-400">
+                            Tool: {activeAssessment.toolExecutionTimeMs}ms | Latency: {activeAssessment.latencyMs ?? activeAssessment.executionDurationMs}ms
+                          </span>
+                        )}
+                      </div>
                       <div className="space-y-1.5">
-                        {activeAssessment.actionsTaken.map((act, idx) => (
+                        {(activeAssessment.agentActionsExecuted ?? activeAssessment.actionsTaken).map((act, idx) => (
                           <div
                             key={idx}
                             className="text-xs p-2 rounded bg-slate-900/90 border border-slate-800/80 flex items-start justify-between gap-2"

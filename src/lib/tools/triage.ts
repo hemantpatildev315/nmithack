@@ -1,176 +1,290 @@
 /**
  * @file triage.ts
- * @description Deterministic Clinical Acuity (ESI 1-5) and Emergency Resource Allocation algorithms.
- * Implements low-cyclomatic-complexity table lookups and pure predicates based on
- * the Emergency Severity Index (ESI) and National Early Warning Score (NEWS2) frameworks.
+ * @description Deterministic clinical triage algorithms based on the Emergency Severity Index (ESI)
+ * and vital sign risk scoring. Implements a declarative rule matrix and constant lookup tables
+ * to eliminate nested branching, minimize cyclomatic complexity, and guarantee sub-millisecond execution.
  */
 
 import {
   Vitals,
   VitalsSchema,
   AcuityScore,
+  EsiCategory,
   EsiLevel,
-  DepartmentCapacity,
   ResourceAllocation,
+  DepartmentCapacity,
   DepartmentType,
 } from "@/lib/types";
 
 // ==============================================================================
-// 1. Vital Sign Evaluation Lookup Tables (Reduced Cyclomatic Complexity)
+// 1. Declarative Constant Lookup Tables for Vital Risk Scoring
 // ==============================================================================
 
-interface VitalRule {
-  readonly predicate: (val: number) => boolean;
-  readonly points: number;
-  readonly message: (val: number) => string;
-}
-
-const SPO2_RULES: readonly VitalRule[] = [
-  {
-    predicate: (val) => val < 85,
-    points: 3,
-    message: (val) => `Critical Hypoxemia (SpO2: ${val}%)`,
-  },
-  {
-    predicate: (val) => val <= 91,
-    points: 2,
-    message: (val) => `Severe Hypoxia (SpO2: ${val}%)`,
-  },
-  {
-    predicate: (val) => val <= 94,
-    points: 1,
-    message: (val) => `Mild-Moderate Hypoxia (SpO2: ${val}%)`,
-  },
-];
-
-const HEART_RATE_RULES: readonly VitalRule[] = [
-  {
-    predicate: (val) => val <= 40 || val >= 140,
-    points: 3,
-    message: (val) => `Extreme Heart Rate (${val} bpm)`,
-  },
-  {
-    predicate: (val) => val <= 50 || val >= 115,
-    points: 2,
-    message: (val) => `Marked Arrhythmia/Tachycardia (${val} bpm)`,
-  },
-  {
-    predicate: (val) => val <= 55 || val >= 100,
-    points: 1,
-    message: (val) => `Mild Heart Rate Deviation (${val} bpm)`,
-  },
-];
-
-const SYSTOLIC_BP_RULES: readonly VitalRule[] = [
-  {
-    predicate: (val) => val < 80 || val >= 220,
-    points: 3,
-    message: (val) =>
-      val < 80
-        ? `Hypotensive Shock (Systolic: ${val} mmHg)`
-        : `Hypertensive Crisis (Systolic: ${val} mmHg)`,
-  },
-  {
-    predicate: (val) => val <= 90 || val >= 180,
-    points: 2,
-    message: (val) => `Significant BP Abnormality (Systolic: ${val} mmHg)`,
-  },
-  {
-    predicate: (val) => val < 100 || val >= 140,
-    points: 1,
-    message: (val) => `Borderline Blood Pressure (${val} mmHg)`,
-  },
-];
-
-const RESPIRATORY_RATE_RULES: readonly VitalRule[] = [
-  {
-    predicate: (val) => val <= 8 || val >= 35,
-    points: 3,
-    message: (val) => `Critical Respiratory Rate (${val} bpm)`,
-  },
-  {
-    predicate: (val) => val <= 10 || val >= 26,
-    points: 2,
-    message: (val) => `Marked Tachypnea/Bradypnea (${val} bpm)`,
-  },
-  {
-    predicate: (val) => val < 12 || val >= 21,
-    points: 1,
-    message: (val) => `Elevated Respiratory Rate (${val} bpm)`,
-  },
-];
-
-const GCS_RULES: readonly VitalRule[] = [
-  {
-    predicate: (val) => val < 8,
-    points: 3,
-    message: (val) => `Severe Neurological Deficit (GCS: ${val})`,
-  },
-  {
-    predicate: (val) => val <= 12,
-    points: 2,
-    message: (val) => `Altered Mental Status (GCS: ${val})`,
-  },
-  {
-    predicate: (val) => val <= 14,
-    points: 1,
-    message: (val) => `Mild Lethargy/Confusion (GCS: ${val})`,
-  },
-];
-
 /**
- * Pure helper matching a vital metric value against constant rule hierarchies.
- *
- * @param value - Numerical value of the evaluated physiological vital.
- * @param rules - Ordered array of evaluation rules.
- * @returns Evaluated point penalty and optional descriptive message.
+ * Oxygen saturation rule criteria for vital risk calculation.
  */
-function evaluateVitalRule(
-  value: number,
-  rules: readonly VitalRule[]
-): { points: number; message?: string } {
-  const matched = rules.find((r) => r.predicate(value));
-  return matched
-    ? { points: matched.points, message: matched.message(value) }
-    : { points: 0 };
+export interface SpO2Rule {
+  readonly max: number;
+  readonly score: number;
+  readonly message: string;
 }
 
+export const SPO2_RULES: readonly SpO2Rule[] = [
+  { max: 85, score: 3.5, message: "Critical Hypoxemia (SpO2 <= 85%)" },
+  { max: 90, score: 2.5, message: "Severe Hypoxia (SpO2 86-90%)" },
+  { max: 94, score: 1.0, message: "Mild Hypoxemia (SpO2 91-94%)" },
+] as const;
+
+/**
+ * Heart rate risk rule criteria.
+ */
+export interface HeartRateRule {
+  readonly min?: number;
+  readonly max?: number;
+  readonly score: number;
+  readonly message: string;
+}
+
+export const HEART_RATE_RULES: readonly HeartRateRule[] = [
+  { min: 140, score: 3.0, message: "Extreme Heart Rate / Tachycardia (HR >= 140 bpm)" },
+  { max: 40, score: 3.0, message: "Severe Bradycardia (HR <= 40 bpm)" },
+  { min: 110, score: 1.5, message: "Moderate Tachycardia (HR 110-139 bpm)" },
+  { max: 50, score: 1.5, message: "Moderate Bradycardia (HR 41-50 bpm)" },
+] as const;
+
+/**
+ * Systolic blood pressure hemodynamic risk rule criteria.
+ */
+export interface SystolicBpRule {
+  readonly min?: number;
+  readonly max?: number;
+  readonly score: number;
+  readonly message: string;
+}
+
+export const SYSTOLIC_BP_RULES: readonly SystolicBpRule[] = [
+  { max: 80, score: 3.5, message: "Hypotensive Shock (Systolic BP <= 80 mmHg)" },
+  { min: 200, score: 3.0, message: "Hypertensive Crisis (Systolic BP >= 200 mmHg)" },
+  { max: 90, score: 2.0, message: "Significant Hypotension (Systolic BP 81-90 mmHg)" },
+  { min: 180, score: 1.5, message: "Marked Hypertension (Systolic BP 180-199 mmHg)" },
+] as const;
+
+/**
+ * Respiratory rate risk rule criteria.
+ */
+export interface RespiratoryRateRule {
+  readonly min?: number;
+  readonly max?: number;
+  readonly score: number;
+  readonly message: string;
+}
+
+export const RESPIRATORY_RATE_RULES: readonly RespiratoryRateRule[] = [
+  { min: 35, score: 3.0, message: "Severe Tachypnea (RR >= 35 breaths/min)" },
+  { max: 8, score: 3.5, message: "Respiratory Failure / Bradypnea (RR <= 8 breaths/min)" },
+  { min: 26, score: 1.5, message: "Moderate Tachypnea (RR 26-34 breaths/min)" },
+  { max: 10, score: 2.0, message: "Depressed Respiration (RR 9-10 breaths/min)" },
+] as const;
+
+/**
+ * Glasgow Coma Scale neurological risk rule criteria.
+ */
+export interface GcsRule {
+  readonly max: number;
+  readonly score: number;
+  readonly message: string;
+}
+
+export const GCS_RULES: readonly GcsRule[] = [
+  { max: 8, score: 4.0, message: "Severe Neurological Coma (GCS <= 8)" },
+  { max: 12, score: 2.5, message: "Moderate Neurological Impairment (GCS 9-12)" },
+  { max: 14, score: 1.0, message: "Mild Neurological Confusion (GCS 13-14)" },
+] as const;
+
 // ==============================================================================
-// 2. Acuity Scoring Engine
+// 2. Declarative ESI Evaluation Matrix
 // ==============================================================================
 
 /**
- * Calculates vital risk index and physiological risk factors using constant lookup tables.
+ * Rule configuration contract for declarative ESI acuity mapping.
+ */
+export interface EsiEvaluationRule {
+  readonly level: EsiLevel;
+  readonly category: EsiCategory;
+  readonly clinicalFlag: string;
+  readonly isCritical: boolean;
+  readonly predicate: (vitals: Readonly<Vitals>, score: number) => boolean;
+}
+
+/**
+ * Declarative rule matrix ordered strictly by clinical urgency (ESI 1 to 4).
+ * Evaluated top-to-bottom to guarantee deterministic priority resolution.
+ */
+export const ESI_EVALUATION_MATRIX: readonly EsiEvaluationRule[] = [
+  {
+    level: 1,
+    category: "IMMEDIATE",
+    clinicalFlag: "RESUSCITATION_REQUIRED",
+    isCritical: true,
+    predicate: (vitals: Readonly<Vitals>, score: number): boolean =>
+      (vitals.glasgowComaScale !== undefined && vitals.glasgowComaScale <= 8) ||
+      vitals.spO2 < 80 ||
+      vitals.systolicBp < 70 ||
+      vitals.respiratoryRate <= 6 ||
+      vitals.respiratoryRate >= 45 ||
+      vitals.heartRate <= 35 ||
+      vitals.heartRate >= 180 ||
+      score >= 8.5,
+  },
+  {
+    level: 2,
+    category: "EMERGENT",
+    clinicalFlag: "HIGH_RISK_EMERGENT",
+    isCritical: true,
+    predicate: (vitals: Readonly<Vitals>, score: number): boolean =>
+      score >= 3.0 ||
+      vitals.spO2 < 92 ||
+      vitals.systolicBp < 90 ||
+      vitals.systolicBp >= 190 ||
+      vitals.heartRate > 120 ||
+      vitals.heartRate < 45 ||
+      vitals.respiratoryRate >= 28 ||
+      vitals.respiratoryRate < 10 ||
+      (vitals.glasgowComaScale !== undefined && vitals.glasgowComaScale <= 13),
+  },
+  {
+    level: 3,
+    category: "URGENT",
+    clinicalFlag: "URGENT_DIAGNOSTICS_NEEDED",
+    isCritical: false,
+    predicate: (vitals: Readonly<Vitals>, score: number): boolean =>
+      score >= 1.5 ||
+      vitals.spO2 <= 95 ||
+      vitals.systolicBp < 100 ||
+      vitals.systolicBp >= 160 ||
+      vitals.heartRate >= 100 ||
+      vitals.heartRate <= 55 ||
+      vitals.respiratoryRate >= 22 ||
+      (vitals.temperatureCelsius !== undefined &&
+        (vitals.temperatureCelsius >= 38.5 || vitals.temperatureCelsius <= 35.5)),
+  },
+  {
+    level: 4,
+    category: "LESS_URGENT",
+    clinicalFlag: "SIMPLE_RESOURCE_CARE",
+    isCritical: false,
+    predicate: (vitals: Readonly<Vitals>, score: number): boolean =>
+      score > 0 ||
+      (vitals.temperatureCelsius !== undefined && vitals.temperatureCelsius >= 38.0),
+  },
+] as const;
+
+/**
+ * Pure helper predicate evaluating if patient telemetry meets ESI Level 1 criteria.
  *
- * @param vitals - Validated patient physiological vitals.
- * @returns An object containing the normalized vital risk score (0.0–10.0) and identified risk factor strings.
+ * @param vitals - Verified patient physiological vital signs.
+ * @param vitalScore - Computed composite vital sign risk index.
+ * @returns True if immediate resuscitation is required; false otherwise.
+ * @throws Never throws under valid Vitals inputs.
+ */
+export function isEsi1Criteria(vitals: Readonly<Vitals>, vitalScore: number): boolean {
+  const rule = ESI_EVALUATION_MATRIX[0];
+  return rule ? rule.predicate(vitals, vitalScore) : false;
+}
+
+export function isEsi2Criteria(vitals: Readonly<Vitals>, vitalScore: number): boolean {
+  const rule = ESI_EVALUATION_MATRIX[1];
+  return rule ? rule.predicate(vitals, vitalScore) : false;
+}
+
+export function isEsi3Criteria(vitals: Readonly<Vitals>, vitalScore: number): boolean {
+  const rule = ESI_EVALUATION_MATRIX[2];
+  return rule ? rule.predicate(vitals, vitalScore) : false;
+}
+
+// ==============================================================================
+// 3. Deterministic Vital Risk Index Engine
+// ==============================================================================
+
+/**
+ * Computes a standardized numerical risk index and extracts specific risk factor descriptions.
+ * Uses constant lookup tables for zero cyclomatic overhead.
+ *
+ * @param vitals - Patient physiological vitals payload.
+ * @returns An object containing the aggregated score and identified clinical risk factors.
+ * @throws Never throws; all vital ranges are clamped and guarded by upstream Zod schemas.
  */
 export function calculateVitalRiskIndex(vitals: Readonly<Vitals>): {
   score: number;
   riskFactors: string[];
 } {
+  let score = 0;
   const riskFactors: string[] = [];
-  let rawPoints = 0;
 
-  const evaluations = [
-    evaluateVitalRule(vitals.spO2, SPO2_RULES),
-    evaluateVitalRule(vitals.heartRate, HEART_RATE_RULES),
-    evaluateVitalRule(vitals.systolicBp, SYSTOLIC_BP_RULES),
-    evaluateVitalRule(vitals.respiratoryRate, RESPIRATORY_RATE_RULES),
-    vitals.glasgowComaScale !== undefined
-      ? evaluateVitalRule(vitals.glasgowComaScale, GCS_RULES)
-      : { points: 0 },
-  ];
+  // 1. Oxygen Saturation Evaluation
+  for (const rule of SPO2_RULES) {
+    if (vitals.spO2 <= rule.max) {
+      score += rule.score;
+      riskFactors.push(rule.message);
+      break;
+    }
+  }
 
-  for (const ev of evaluations) {
-    if (ev.points > 0 && ev.message) {
-      rawPoints += ev.points;
-      riskFactors.push(ev.message);
+  // 2. Heart Rate Evaluation
+  for (const rule of HEART_RATE_RULES) {
+    if (rule.min !== undefined && vitals.heartRate >= rule.min) {
+      score += rule.score;
+      riskFactors.push(rule.message);
+      break;
+    }
+    if (rule.max !== undefined && vitals.heartRate <= rule.max) {
+      score += rule.score;
+      riskFactors.push(rule.message);
+      break;
+    }
+  }
+
+  // 3. Systolic Blood Pressure Evaluation
+  for (const rule of SYSTOLIC_BP_RULES) {
+    if (rule.max !== undefined && vitals.systolicBp <= rule.max) {
+      score += rule.score;
+      riskFactors.push(rule.message);
+      break;
+    }
+    if (rule.min !== undefined && vitals.systolicBp >= rule.min) {
+      score += rule.score;
+      riskFactors.push(rule.message);
+      break;
+    }
+  }
+
+  // 4. Respiratory Rate Evaluation
+  for (const rule of RESPIRATORY_RATE_RULES) {
+    if (rule.min !== undefined && vitals.respiratoryRate >= rule.min) {
+      score += rule.score;
+      riskFactors.push(rule.message);
+      break;
+    }
+    if (rule.max !== undefined && vitals.respiratoryRate <= rule.max) {
+      score += rule.score;
+      riskFactors.push(rule.message);
+      break;
+    }
+  }
+
+  // 5. Glasgow Coma Scale (Optional)
+  if (vitals.glasgowComaScale !== undefined) {
+    for (const rule of GCS_RULES) {
+      if (vitals.glasgowComaScale <= rule.max) {
+        score += rule.score;
+        riskFactors.push(rule.message);
+        break;
+      }
     }
   }
 
   // Normalize points to a 0.0 - 10.0 scale (12 raw points max normalization)
-  const normalized = Math.min(10, Number(((rawPoints / 12) * 10).toFixed(2)));
+  const normalized = Math.min(10, Number(((score / 12) * 10).toFixed(2)));
 
   return {
     score: normalized,
@@ -178,245 +292,148 @@ export function calculateVitalRiskIndex(vitals: Readonly<Vitals>): {
   };
 }
 
-/**
- * Predicate checking whether vitals satisfy Emergency Severity Index (ESI) Level 1 criteria.
- *
- * @param vitals - Patient vital parameters.
- * @param riskScore - Normalized vital risk score.
- * @returns True if patient requires immediate resuscitation.
- */
-function isEsi1Criteria(vitals: Readonly<Vitals>, riskScore: number): boolean {
-  return (
-    vitals.spO2 < 85 ||
-    vitals.heartRate < 40 ||
-    vitals.heartRate > 170 ||
-    vitals.systolicBp < 70 ||
-    vitals.respiratoryRate < 8 ||
-    vitals.respiratoryRate > 40 ||
-    (vitals.glasgowComaScale !== undefined && vitals.glasgowComaScale < 8) ||
-    riskScore >= 8.5
-  );
-}
+// ==============================================================================
+// 4. Acuity Score Calculation
+// ==============================================================================
 
 /**
- * Predicate checking whether vitals satisfy Emergency Severity Index (ESI) Level 2 criteria.
+ * Evaluates patient vital signs against the Emergency Severity Index (ESI) 5-tier classification.
+ * Executes the declarative rule matrix with zero nested branching.
  *
- * @param vitals - Patient vital parameters.
- * @param riskScore - Normalized vital risk score.
- * @returns True if patient is emergent and in physiological danger.
- */
-function isEsi2Criteria(vitals: Readonly<Vitals>, riskScore: number): boolean {
-  return (
-    vitals.spO2 < 92 ||
-    vitals.heartRate < 50 ||
-    vitals.heartRate > 120 ||
-    vitals.systolicBp < 90 ||
-    vitals.systolicBp > 200 ||
-    vitals.respiratoryRate < 10 ||
-    vitals.respiratoryRate > 28 ||
-    (vitals.glasgowComaScale !== undefined && vitals.glasgowComaScale <= 12) ||
-    riskScore >= 4.0
-  );
-}
-
-/**
- * Predicate checking whether vitals satisfy Emergency Severity Index (ESI) Level 3 criteria.
- *
- * @param vitals - Patient vital parameters.
- * @param riskScore - Normalized vital risk score.
- * @returns True if patient is urgent and requires multiple diagnostic resources.
- */
-function isEsi3Criteria(vitals: Readonly<Vitals>, riskScore: number): boolean {
-  return (
-    vitals.heartRate >= 100 ||
-    vitals.heartRate <= 55 ||
-    vitals.systolicBp >= 140 ||
-    vitals.systolicBp <= 98 ||
-    vitals.respiratoryRate >= 21 ||
-    vitals.spO2 <= 95 ||
-    riskScore >= 1.5
-  );
-}
-
-/**
- * Pure, deterministic algorithm calculating Emergency Severity Index (ESI Level 1–5).
- * Validates inputs strictly using Zod and produces reproducible clinical flags.
- *
- * @param rawVitals - Inbound patient vital signs payload.
- * @returns Fully computed AcuityScore object.
+ * @param rawVitals - Inbound patient physiological vital signs.
+ * @returns Fully computed AcuityScore object with category, risk factors, and clinical flag.
  * @throws {z.ZodError} If vitals violate physiological boundaries.
  */
 export function calculateAcuity(rawVitals: Readonly<Vitals>): AcuityScore {
   const vitals = VitalsSchema.parse(rawVitals);
   const { score: vitalRiskScore, riskFactors } = calculateVitalRiskIndex(vitals);
 
-  if (isEsi1Criteria(vitals, vitalRiskScore)) {
-    return {
-      esiLevel: 1,
-      esiCategory: "IMMEDIATE",
-      vitalRiskScore,
-      riskFactors,
-      isCritical: true,
-      clinicalFlag: "CRITICAL_RESUSCITATION",
-    };
-  }
+  const matchedRule = ESI_EVALUATION_MATRIX.find((rule) =>
+    rule.predicate(vitals, vitalRiskScore)
+  );
 
-  if (isEsi2Criteria(vitals, vitalRiskScore)) {
+  if (matchedRule) {
     return {
-      esiLevel: 2,
-      esiCategory: "EMERGENT",
+      esiLevel: matchedRule.level,
+      esiCategory: matchedRule.category,
       vitalRiskScore,
       riskFactors,
-      isCritical: true,
-      clinicalFlag: "HIGH_RISK_EMERGENT",
-    };
-  }
-
-  if (isEsi3Criteria(vitals, vitalRiskScore)) {
-    return {
-      esiLevel: 3,
-      esiCategory: "URGENT",
-      vitalRiskScore,
-      riskFactors,
-      isCritical: false,
-      clinicalFlag: "URGENT_OBSERVATION",
-    };
-  }
-
-  if (vitalRiskScore > 0) {
-    return {
-      esiLevel: 4,
-      esiCategory: "LESS_URGENT",
-      vitalRiskScore,
-      riskFactors,
-      isCritical: false,
-      clinicalFlag: "LESS_URGENT_EVALUATION",
+      isCritical: matchedRule.isCritical,
+      clinicalFlag: matchedRule.clinicalFlag,
     };
   }
 
   return {
     esiLevel: 5,
-    esiCategory: "NON_URGENT",
-    vitalRiskScore,
-    riskFactors,
+    esiCategory: "NON_URGENT" as EsiCategory,
+    vitalRiskScore: 0,
+    riskFactors: [],
     isCritical: false,
-    clinicalFlag: "ROUTINE_AMBULATORY",
+    clinicalFlag: "ROUTINE_AMBULATORY_CARE",
   };
 }
 
 // ==============================================================================
-// 3. Department Allocation Lookup Matrix (Clean Architecture)
+// 5. Deterministic Hospital Resource Allocation Matrix
 // ==============================================================================
 
-interface DepartmentPolicy {
-  readonly primaryDept: DepartmentType;
-  readonly secondaryDept: DepartmentType;
+/**
+ * Policy structure defining hospital department priority, wait target, and equipment requirements.
+ */
+export interface AllocationPolicy {
+  readonly preferred: DepartmentType;
+  readonly fallback: DepartmentType;
   readonly priorityRank: number;
-  readonly defaultWaitMinutes: number;
+  readonly waitMinutes: number;
   readonly equipment: readonly string[];
 }
 
-const ALLOCATION_POLICIES: Record<EsiLevel, DepartmentPolicy> = {
+export const ALLOCATION_POLICIES: Readonly<Record<number, AllocationPolicy>> = {
   1: {
-    primaryDept: "ICU",
-    secondaryDept: "ER",
+    preferred: "ICU",
+    fallback: "ER",
     priorityRank: 1,
-    defaultWaitMinutes: 0,
-    equipment: [
-      "Continuous Cardiac Monitor",
-      "Mechanical Ventilator / High-Flow O2",
-      "Arterial Line / Rapid Infuser",
-      "Defibrillator on Standby",
-    ],
+    waitMinutes: 0,
+    equipment: ["Ventilator / BiPAP", "Cardiac Monitor & Defibrillator", "Stat Blood Gas Kit", "Arterial Line Setup"],
   },
   2: {
-    primaryDept: "ER",
-    secondaryDept: "ICU",
+    preferred: "ER",
+    fallback: "ICU",
     priorityRank: 2,
-    defaultWaitMinutes: 5,
-    equipment: [
-      "Continuous Pulse Oximetry",
-      "ECG 12-Lead",
-      "IV Access & Stat Labs",
-      "Dedicated RN Monitoring",
-    ],
+    waitMinutes: 5,
+    equipment: ["Continuous Pulse Oximetry", "ECG 12-Lead", "IV Access & Stat Labs", "Dedicated RN Monitoring"],
   },
   3: {
-    primaryDept: "ER",
-    secondaryDept: "General Ward",
+    preferred: "ER",
+    fallback: "General Ward",
     priorityRank: 3,
-    defaultWaitMinutes: 30,
-    equipment: ["Intermittent Vitals Monitor", "Standard Lab Blood Draw"],
+    waitMinutes: 30,
+    equipment: ["Vital Signs Monitor", "Standard IV Kit", "Point of Care Blood Labs"],
   },
   4: {
-    primaryDept: "Fast Track",
-    secondaryDept: "General Ward",
+    preferred: "Fast Track",
+    fallback: "General Ward",
     priorityRank: 4,
-    defaultWaitMinutes: 60,
-    equipment: ["Basic Examination Tools"],
+    waitMinutes: 60,
+    equipment: ["Basic Examination Kit", "Rapid Diagnostic Swabs"],
   },
   5: {
-    primaryDept: "Fast Track",
-    secondaryDept: "General Ward",
+    preferred: "Fast Track",
+    fallback: "General Ward",
     priorityRank: 5,
-    defaultWaitMinutes: 90,
-    equipment: ["Standard Outpatient Triage Kit"],
+    waitMinutes: 90,
+    equipment: ["Standard Exam Bed"],
   },
-};
+} as const;
 
 /**
- * Deterministically assigns a hospital department, queue priority rank, and life-support equipment
- * matching patient clinical acuity with real-time department bed capacity.
+ * Deterministically assigns hospital department, equipment, and priority ranking
+ * based on calculated acuity and available bed capacity.
  *
- * @param acuity - Evaluated patient acuity and ESI score.
- * @param capacities - Real-time hospital department bed availability states.
- * @returns ResourceAllocation decision payload.
+ * @param acuity - The computed AcuityScore for the patient.
+ * @param capacities - Real-time hospital department capacity snapshots.
+ * @returns Final ResourceAllocation plan with equipment requirements and wait estimation.
+ * @throws Never throws under valid inputs.
  */
 export function matchResourceAllocation(
   acuity: Readonly<AcuityScore>,
   capacities: readonly DepartmentCapacity[]
 ): ResourceAllocation {
-  const policy = ALLOCATION_POLICIES[acuity.esiLevel];
-  const findDept = (dept: DepartmentType) => capacities.find((c) => c.department === dept);
+  const defaultPolicy: AllocationPolicy = ALLOCATION_POLICIES[5] as AllocationPolicy;
+  const policy: AllocationPolicy = (ALLOCATION_POLICIES[acuity.esiLevel] ?? defaultPolicy) as AllocationPolicy;
+  const capacityMap = new Map<DepartmentType, DepartmentCapacity>(
+    capacities.map((c) => [c.department, c])
+  );
 
-  const primary = findDept(policy.primaryDept);
-  const secondary = findDept(policy.secondaryDept);
+  const preferredCap = capacityMap.get(policy.preferred);
+  const fallbackCap = capacityMap.get(policy.fallback);
 
-  let recommendedDepartment: DepartmentType;
-  let alternativeDepartment: DepartmentType | undefined;
+  let targetDepartment: DepartmentType = policy.preferred;
+  let alternativeDepartment: DepartmentType | undefined = policy.fallback;
 
-  // Check bed availability: prefer primary if beds exist, otherwise divert to secondary
-  if (primary && primary.availableBeds > 0) {
-    recommendedDepartment = policy.primaryDept;
-    alternativeDepartment = policy.secondaryDept;
-  } else if (secondary && secondary.availableBeds > 0) {
-    recommendedDepartment = policy.secondaryDept;
-    alternativeDepartment = policy.primaryDept;
-  } else {
-    recommendedDepartment = policy.primaryDept;
-    alternativeDepartment = policy.secondaryDept;
+  if (preferredCap && preferredCap.availableBeds <= 0) {
+    if (fallbackCap && fallbackCap.availableBeds > 0) {
+      targetDepartment = policy.fallback;
+      alternativeDepartment = policy.preferred;
+    }
   }
 
-  const waitMinutes =
-    policy.priorityRank === 1
-      ? 0
-      : Math.min(
-          policy.defaultWaitMinutes * 2,
-          Math.max(policy.defaultWaitMinutes, (primary?.occupiedBeds ?? 0) * 2)
-        );
+  const assignedCap = capacityMap.get(targetDepartment);
+  const allocatedBedId = assignedCap && assignedCap.availableBeds > 0
+    ? `${targetDepartment.replace(/\s+/g, "").toUpperCase()}-BAY-${assignedCap.occupiedBeds + 1}`
+    : undefined;
 
-  const targetDept = findDept(recommendedDepartment);
-  const contingencyPlan =
-    targetDept && targetDept.availableBeds === 0
-      ? `Primary department ${recommendedDepartment} is at capacity (${targetDept.occupiedBeds}/${targetDept.totalBeds}). Divert to ${alternativeDepartment ?? "Overflow Area"} immediately.`
-      : undefined;
+  let estimatedWaitMinutes = policy.waitMinutes;
+  if (assignedCap && assignedCap.utilizationRate >= 0.9) {
+    estimatedWaitMinutes += 15;
+  }
 
   return {
-    recommendedDepartment,
+    recommendedDepartment: targetDepartment,
     alternativeDepartment,
+    allocatedBedId,
     priorityQueueRank: policy.priorityRank,
-    estimatedWaitMinutes: waitMinutes,
+    estimatedWaitMinutes,
     equipmentNeeded: [...policy.equipment],
-    contingencyPlan,
   };
 }
